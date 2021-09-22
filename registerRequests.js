@@ -9,9 +9,9 @@ const {
 } = require('./constants')
 const { appendToFile } = require('./utils')
 
-const MESSAGES_FOR_USER_IDS = ['<USER_ID>']
-const DATA_FOR_USER_IDS = ['<USER_ID>']
-const DATA_FOR_CHANNEL_URLS = ['<CHANNEL_URL>']
+const MESSAGES_FOR_USER_IDS = ['user1'] // add user IDs for which to export messages
+const DATA_FOR_USER_IDS = [] // add user IDs for which to export data
+const DATA_FOR_CHANNEL_URLS = [] // add channel URLs for which to export data
 
 // period of all data types under 7 days
 // since the amount of the data may affect the data export process.
@@ -29,26 +29,46 @@ const dataTypes = [
   // "failed_webhooks"
 ]
 
-async function registerRequests(dataTypesIndex = 0) {
-  const formattedDate = {
-    from: new Date(range.from).toLocaleDateString(),
-    to: new Date(range.to).toLocaleDateString()
-  }
+const formattedDate = {
+  from: new Date(range.from).toLocaleDateString(),
+  to: new Date(range.to).toLocaleDateString()
+}
 
+async function registerRequests(dataTypesIndex = 0) {
   // Docs: https://sendbird.com/docs/chat/v3/platform-api/guides/data-export#2-register-and-schedule-a-data-export
   const apiRoute = `https://api-${APP_ID}.sendbird.com/v3/export/${dataTypes[dataTypesIndex]}`
+  const body = {
+    start_ts: range.from,
+    end_ts: range.to,
+    format: OUTPUT_FORMAT,
+  }
+
+  switch (dataTypes[dataTypesIndex]) {
+    case 'channels':
+      if (DATA_FOR_CHANNEL_URLS.length) {
+        body.channel_urls = DATA_FOR_CHANNEL_URLS
+      }
+      break;
+    case 'messages':
+      if (DATA_FOR_CHANNEL_URLS.length) {
+        body.channel_urls = DATA_FOR_CHANNEL_URLS
+      }
+      if (MESSAGES_FOR_USER_IDS.length) {
+        body.sender_ids = MESSAGES_FOR_USER_IDS
+      }
+      break;
+    case 'users':
+      if (DATA_FOR_USER_IDS.length) {
+        body.user_ids = DATA_FOR_USER_IDS
+      }
+    default:
+      break;
+  }
 
   const response = await fetch(apiRoute, {
     method: "POST",
     headers: { 'Api-Token': API_TOKEN },
-    body: JSON.stringify({
-      start_ts: range.from,
-      end_ts: range.to,
-      format: OUTPUT_FORMAT,
-      sender_ids: dataTypes[dataTypesIndex] === 'messages' ? MESSAGES_FOR_USER_IDS : null,
-      user_ids: dataTypes[dataTypesIndex] === 'users' ? DATA_FOR_USER_IDS : null,
-      channel_urls: dataTypes[dataTypesIndex] === 'messages' || dataTypes[dataTypesIndex] === 'channels' ? DATA_FOR_CHANNEL_URLS : null,
-    })
+    body: JSON.stringify(body)
   })
 
   if (response.status !== 200) {
@@ -57,7 +77,6 @@ async function registerRequests(dataTypesIndex = 0) {
   }
 
   const { request_id, status } = await response.json()
-
   const data = {
     requestId: request_id,
     dataType: dataTypes[dataTypesIndex],
