@@ -5,41 +5,40 @@ const {
   APP_ID,
   API_TOKEN,
   REQUEST_THROTTLING_TIMEOUT,
-  OUTPUT_FORMAT
+  OUTPUT_FORMAT,
+  ONE_MONTH,
+  JSON_FILENAME
 } = require('./constants')
 const { appendToFile } = require('./utils')
+const getTickets = require('./getTickets')
 
-const MESSAGES_FOR_USER_IDS = ['user1'] // add user IDs for which to export messages
+const MESSAGES_FOR_USER_IDS = [] // add user IDs for which to export messages
 const DATA_FOR_USER_IDS = [] // add user IDs for which to export data
+// this array gets populated with ticket channel URLs inside of getTickets.js
 const DATA_FOR_CHANNEL_URLS = [] // add channel URLs for which to export data
 
-// period of all data types under 7 days
-// since the amount of the data may affect the data export process.
-const SEVEN_DAYS = 1000 * 60 * 60 * 24 * 7 // 604800000
+// Max period of message data export is 31 days ( end_ts - start_ts <= 2,678,400,000)
+// More about limitations: https://sendbird.com/docs/chat/v3/platform-api/guides/data-export#2-limitations
 const now = new Date().getTime()
-const range = {
-  from: now - SEVEN_DAYS,
+const dateRange = {
+  from: now - (1 * ONE_MONTH),
   to: now
 }
 
-const dataTypes = [
-  "messages",
-  // "channels",
-  // "users",
-  // "failed_webhooks"
-]
+// ["messages", "channels",  "users",  "failed_webhooks"]
+const dataTypes = ["messages"]
 
 const formattedDate = {
-  from: new Date(range.from).toLocaleDateString(),
-  to: new Date(range.to).toLocaleDateString()
+  from: new Date(dateRange.from).toLocaleDateString(),
+  to: new Date(dateRange.to).toLocaleDateString()
 }
 
 async function registerRequests(dataTypesIndex = 0) {
   // Docs: https://sendbird.com/docs/chat/v3/platform-api/guides/data-export#2-register-and-schedule-a-data-export
   const apiRoute = `https://api-${APP_ID}.sendbird.com/v3/export/${dataTypes[dataTypesIndex]}`
   const body = {
-    start_ts: range.from,
-    end_ts: range.to,
+    start_ts: dateRange.from,
+    end_ts: dateRange.to,
     format: OUTPUT_FORMAT,
   }
 
@@ -51,7 +50,9 @@ async function registerRequests(dataTypesIndex = 0) {
       break;
     case 'messages':
       if (DATA_FOR_CHANNEL_URLS.length) {
+        // this array contains channel URLs from previously fetched tickets in getTickets.js
         body.channel_urls = DATA_FOR_CHANNEL_URLS
+        console.log(`\nℹ️ Registering a new data export request for ${DATA_FOR_CHANNEL_URLS.length} channel URLs`);
       }
       if (MESSAGES_FOR_USER_IDS.length) {
         body.sender_ids = MESSAGES_FOR_USER_IDS
@@ -65,6 +66,7 @@ async function registerRequests(dataTypesIndex = 0) {
       break;
   }
 
+  // register data export request to the Sendbird API
   const response = await fetch(apiRoute, {
     method: "POST",
     headers: { 'Api-Token': API_TOKEN },
@@ -73,6 +75,10 @@ async function registerRequests(dataTypesIndex = 0) {
 
   if (response.status !== 200) {
     console.log(`\n❌ Failed request: ${response.status} - ${response.statusText}`)
+    if (response.status === 400) {
+      const { message } = await response.json()
+      console.log(`❌ Error message: ${message}`)
+    }
     return
   }
 
@@ -101,13 +107,17 @@ async function registerRequests(dataTypesIndex = 0) {
 (async function init() {
   // initialise json file - will delete all previous data and creates a new file if not found
   fs.writeFile(JSON_FILE_PATH, JSON.stringify({
-    requests: []
+    requests: [],
+    tickets: []
   }), (err) => {
     return console.log(err
-      ? `\n❌ Init ${JSON_FILE_PATH} file error`
-      : `\n✅ Init ${JSON_FILE_PATH} file success`)
+      ? `\n❌ Init ${JSON_FILENAME} file error`
+      : `\n✅ Init ${JSON_FILENAME} file success`)
   })
 
-  // begin fetching
+  // begin fetching ticket data
+  const tickets = await getTickets(dateRange)
+  DATA_FOR_CHANNEL_URLS.push(...tickets.map(_ => _.channelUrl))
+  // register message export requests per ticket (channel)
   await registerRequests()
 })()
